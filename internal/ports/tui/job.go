@@ -2,8 +2,11 @@ package tui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -55,25 +58,43 @@ type JobItem struct {
 // --- JobListModel ---
 
 type JobListModel struct {
-	items      []JobItem
-	cursor     int
-	loaded     bool
-	err        error
-	filter     string
-	filterMode bool
+	items       []JobItem
+	cursor      int
+	loaded      bool
+	err         error
+	filter      string
+	filterMode  bool
+	favorites   map[int64]bool // job ID → is favorite
+	favsOnly    bool           // show only favorites
 }
 
-func NewJobListModel() JobListModel { return JobListModel{} }
+func NewJobListModel() JobListModel {
+	favs := loadFavorites()
+	return JobListModel{
+		favorites: favs,
+		favsOnly:  len(favs) > 0, // default to favorites if any exist
+	}
+}
 
 func (m JobListModel) Init() tea.Cmd { return nil }
 
 func (m JobListModel) filteredItems() []JobItem {
+	items := m.items
+	if m.favsOnly {
+		var favs []JobItem
+		for _, it := range items {
+			if m.favorites[it.ID] {
+				favs = append(favs, it)
+			}
+		}
+		items = favs
+	}
 	if m.filter == "" {
-		return m.items
+		return items
 	}
 	q := strings.ToLower(m.filter)
 	var out []JobItem
-	for _, it := range m.items {
+	for _, it := range items {
 		if strings.Contains(strings.ToLower(it.Name), q) ||
 			strings.Contains(fmt.Sprint(it.ID), q) ||
 			strings.Contains(strings.ToLower(it.Schedule), q) {
@@ -118,6 +139,17 @@ func (m JobListModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "/":
 			m.filterMode = true
 			return m, nil
+		case "f":
+			id := m.SelectedID()
+			if id > 0 {
+				m.favorites[id] = !m.favorites[id]
+				go saveFavorites(m.favorites)
+			}
+			return m, nil
+		case "F":
+			m.favsOnly = !m.favsOnly
+			m.cursor = 0
+			return m, nil
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -157,11 +189,18 @@ func (m JobListModel) View() tea.View {
 		if m.cursor == i {
 			cursor = ">"
 		}
+		fav := " "
+		if m.favorites[item.ID] {
+			fav = "★"
+		}
 		sched := "manual"
 		if item.Schedule != "" {
 			sched = item.Schedule
 		}
-		s += cursor + " " + item.Name + " | " + sched + "\n"
+		s += cursor + fav + " " + item.Name + " | " + sched + "\n"
+	}
+	if m.favsOnly {
+		s += "\n  ★ favorites only (F to show all)"
 	}
 	return tea.NewView(s)
 }
@@ -172,6 +211,30 @@ func (m JobListModel) SelectedID() int64 {
 		return 0
 	}
 	return items[m.cursor].ID
+}
+
+// --- favorites persistence ---
+
+func favPath() string {
+	dir, _ := os.UserHomeDir()
+	return filepath.Join(dir, ".databricks-tui", "favorites.json")
+}
+
+func loadFavorites() map[int64]bool {
+	f := map[int64]bool{}
+	data, err := os.ReadFile(favPath())
+	if err != nil {
+		return f
+	}
+	json.Unmarshal(data, &f)
+	return f
+}
+
+func saveFavorites(favs map[int64]bool) {
+	dir := filepath.Dir(favPath())
+	os.MkdirAll(dir, 0755)
+	data, _ := json.Marshal(favs)
+	os.WriteFile(favPath(), data, 0644)
 }
 
 // --- JobDetailModel ---

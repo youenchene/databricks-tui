@@ -16,8 +16,8 @@ import (
 
 // top-level screens
 const (
-	screenClusterList = iota
-	screenJobList
+	screenJobList = iota
+	screenClusterList
 	screenNotebookList
 )
 
@@ -60,7 +60,7 @@ func NewAppModel(
 	version string,
 ) AppModel {
 	return AppModel{
-		currentScreen: screenClusterList,
+		currentScreen: screenJobList,
 		jobView:       jobViewList,
 		clusterSvc:    clusterSvc,
 		jobSvc:        jobSvc,
@@ -95,10 +95,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tab switching via Code (rune) — reliable across terminals
 		switch msg.Code {
 		case '1':
-			m.currentScreen = screenClusterList
-		case '2':
 			m.currentScreen = screenJobList
 			m.jobView = jobViewList
+		case '2':
+			m.currentScreen = screenClusterList
 		case '3':
 			m.currentScreen = screenNotebookList
 		}
@@ -309,8 +309,8 @@ func (m AppModel) View() tea.View {
 
 func headerView(screen int, profile string, version string, width int) string {
 	tabs := map[int]string{
-		screenClusterList:  "[1] Clusters",
-		screenJobList:      "[2] Jobs",
+		screenJobList:      "[1] Jobs",
+		screenClusterList:  "[2] Clusters",
 		screenNotebookList: "[3] Notebooks",
 	}
 
@@ -347,7 +347,7 @@ func headerView(screen int, profile string, version string, width int) string {
 }
 
 func footerView(width int) string {
-	help := "[/] search  [↑/↓] navigate  [enter] select  [esc] back  [q] quit"
+	help := "[/] search  [f] toggle fav  [F] favs only  [↑/↓] navigate  [enter] select  [esc] back  [q] quit"
 	style := lipgloss.NewStyle().
 		Width(width).
 		Foreground(lipgloss.Color("#626262"))
