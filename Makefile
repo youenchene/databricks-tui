@@ -1,4 +1,4 @@
-.PHONY: build run test test-unit test-arch lint tidy
+.PHONY: build run test test-unit test-arch lint tidy clean snapshot release install-goreleaser
 
 # Build binary
 build:
@@ -35,6 +35,23 @@ tidy:
 lint:
 	golangci-lint run ./...
 
+# Install goreleaser (macOS/Linux)
+install-goreleaser:
+	@which goreleaser >/dev/null 2>&1 && echo "goreleaser already installed" || \
+	(echo "Installing goreleaser..." && go install github.com/goreleaser/goreleaser/v2@latest)
+
+# Build snapshot for local platforms (no publishing, no tag needed)
+snapshot: install-goreleaser
+	@goreleaser build --snapshot --clean --single-target
+
+# Build snapshot for all configured platforms (no publishing)
+snapshot-all: install-goreleaser
+	goreleaser release --snapshot --clean --skip=publish,validate
+
+# Full release (requires GITHUB_TOKEN and git tag)
+release: install-goreleaser test
+	@goreleaser release --clean
+
 # Clean build artifacts
 clean:
-	rm -rf bin/
+	rm -rf bin/ dist/

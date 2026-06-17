@@ -1,0 +1,58 @@
+name: release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Generate CalVer tag
+        id: tag
+        run: |
+          CALVER=$(date +%Y.%m.%d)
+          # Check if tag exists, append micro if so
+          if git rev-parse "v$CALVER" >/dev/null 2>&1; then
+            MICRO=1
+            while git rev-parse "v$CALVER.$MICRO" >/dev/null 2>&1; do
+              MICRO=$((MICRO + 1))
+            done
+            CALVER="$CALVER.$MICRO"
+          fi
+          echo "version=$CALVER" >> $GITHUB_OUTPUT
+          echo "tag=v$CALVER" >> $GITHUB_OUTPUT
+
+      - name: Create tag
+        run: |
+          git tag ${{ steps.tag.outputs.tag }}
+          git push origin ${{ steps.tag.outputs.tag }}
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

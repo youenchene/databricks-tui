@@ -16,7 +16,7 @@ import (
 	"github.com/youenchene/databricks-tui/internal/ports/tui"
 )
 
-const version = "0.1.0"
+var version = "dev"
 
 func main() {
 	// setup structured logging to file (stderr messes up the TUI)
