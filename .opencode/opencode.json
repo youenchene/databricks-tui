@@ -1,0 +1,38 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "OpenAgent": {
+      "permission": {
+        "bash": {
+          "*": "allow",
+          "rm -rf /*": "deny",
+          "sudo *": "deny",
+          "> /dev/*": "deny"
+        },
+        "github_*": "allow",
+        "external_directory": {
+          "~/.config/opencode/**": "allow",
+          "/Users/youen/Code/pulsobot/original/**": "allow",
+          "*": "ask"
+        }
+      }
+    }
+  },
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "rm -rf /*": "deny",
+      "sudo *": "deny",
+      "> /dev/*": "deny"
+    },
+    "github_*": "allow",
+    "external_directory": {
+      "/Users/youen/.config/opencode/**": "allow",
+      "/Users/youen/Code/pulsobot/original/**": "allow",
+      "*": "ask"
+    }
+  },
+  "plugin": [
+    ".opencode/plugins/graphify.js"
+  ]
+}

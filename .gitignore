@@ -1,0 +1,12 @@
+# Build artifacts
+bin/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+
+# Environment
+.env
