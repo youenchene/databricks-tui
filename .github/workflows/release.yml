@@ -1,6 +1,9 @@
 name: release
 
 on:
+  push:
+    tags:
+      - "v*"
   pull_request:
     types: [closed]
     branches:
@@ -12,7 +15,7 @@ permissions:
 
 jobs:
   release:
-    if: github.event.pull_request.merged == true
+    if: github.event.pull_request.merged == true || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,7 +31,8 @@ jobs:
       - name: Run tests
         run: go test ./...
 
-      - name: Generate CalVer tag
+      - name: Generate CalVer tag (PR merge only)
+        if: github.event_name != 'push'
         id: tag
         run: |
           CALVER=$(date +%Y.%m.%d)
@@ -43,7 +47,8 @@ jobs:
           echo "version=$CALVER" >> $GITHUB_OUTPUT
           echo "tag=v$CALVER" >> $GITHUB_OUTPUT
 
-      - name: Create tag
+      - name: Create tag (PR merge only)
+        if: github.event_name != 'push'
         run: |
           git tag ${{ steps.tag.outputs.tag }}
           git push origin ${{ steps.tag.outputs.tag }}
