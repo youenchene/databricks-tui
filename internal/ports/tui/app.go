@@ -29,9 +29,12 @@ type AppModel struct {
 	currentScreen int
 
 	// job navigation
-	jobView    int // jobViewList, jobViewDetail, jobViewTaskDetail
-	jobDetail  JobDetailModel
-	taskDetail TaskDetailModel
+	jobView        int // jobViewList, jobViewDetail, jobViewRunDetail, jobViewTaskDetail
+	jobDetail      JobDetailModel
+	runDetail      RunDetailModel
+	taskDetail     TaskDetailModel
+	taskOrigin     int    // jobViewDetail or jobViewRunDetail — where we came from before task detail
+	pendingTaskKey string // task key waiting for run detail to resolve
 
 	// domain services
 	clusterSvc  *cluster.Service
@@ -44,6 +47,7 @@ type AppModel struct {
 	notebookList NotebookListModel
 
 	userProfile string
+	version     string
 	ready       bool
 }
 
@@ -53,6 +57,7 @@ func NewAppModel(
 	jobSvc *job.Service,
 	notebookSvc *notebook.Service,
 	profile string,
+	version string,
 ) AppModel {
 	return AppModel{
 		currentScreen: screenClusterList,
@@ -64,6 +69,7 @@ func NewAppModel(
 		jobList:       NewJobListModel(),
 		notebookList:  NewNotebookListModel(),
 		userProfile:   profile,
+		version:       version,
 	}
 }
 
@@ -81,18 +87,24 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
+		// quit
+		if msg.String() == "ctrl+c" || msg.String() == "q" {
 			return m, tea.Quit
-		case "1":
+		}
+
+		// tab switching via Code (rune) — reliable across terminals
+		switch msg.Code {
+		case '1':
 			m.currentScreen = screenClusterList
-		case "2":
+		case '2':
 			m.currentScreen = screenJobList
 			m.jobView = jobViewList
-		case "3":
+		case '3':
 			m.currentScreen = screenNotebookList
+		}
 
-		// job navigation
+		// navigation keys
+		switch msg.String() {
 		case "enter":
 			if m.currentScreen == screenJobList {
 				switch m.jobView {
@@ -101,16 +113,46 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if id > 0 {
 						m.jobDetail = NewJobDetailModel(id)
 						m.jobView = jobViewDetail
-						return m, fetchJobDetailCmd(m.jobSvc, id)
+						// fetch job detail + recent runs
+						return m, tea.Batch(
+							fetchJobDetailCmd(m.jobSvc, id),
+							fetchJobRunsCmd(m.jobSvc, id),
+						)
 					}
 				case jobViewDetail:
-					if m.jobDetail.detail != nil {
-						key := m.jobDetail.SelectedTaskKey()
-						if key != "" {
-							m.taskDetail = NewTaskDetailModel(m.jobDetail.detail.Job.Name, key)
-							m.jobView = jobViewTaskDetail
-							return m, fetchRunDetailCmd(m.jobSvc, 0) // TODO: real run ID
+					if m.jobDetail.focusRuns {
+						// enter on a run → open run detail
+						id := m.jobDetail.SelectedRunID()
+						if id > 0 {
+							m.runDetail = NewRunDetailModel(id)
+							m.jobView = jobViewRunDetail
+							return m, fetchRunDetailCmd(m.jobSvc, id)
 						}
+					} else {
+						// enter on a task → fetch latest run, then get task-specific output
+						if m.jobDetail.detail != nil {
+							key := m.jobDetail.SelectedTaskKey()
+							runID := m.jobDetail.SelectedRunID()
+							if key != "" && runID > 0 {
+								m.pendingTaskKey = key
+								m.taskDetail = NewTaskDetailModel(m.jobDetail.detail.Job.Name, key)
+								m.taskOrigin = jobViewDetail
+								m.jobView = jobViewTaskDetail
+								return m, fetchRunDetailCmd(m.jobSvc, runID)
+							}
+						}
+					}
+				case jobViewRunDetail:
+					// enter on a task in run detail → fetch task-specific output
+					key := m.runDetail.SelectedTaskKey()
+					taskRunID := m.runDetail.SelectedTaskRunID()
+					if key != "" && m.runDetail.detail != nil {
+						m.taskDetail = NewTaskDetailModel(
+							fmt.Sprintf("run %d", m.runDetail.detail.Run.RunID), key)
+						m.taskOrigin = jobViewRunDetail
+						m.jobView = jobViewTaskDetail
+						// fetch task-specific output
+						return m, fetchRunDetailCmd(m.jobSvc, taskRunID)
 					}
 				}
 			}
@@ -120,8 +162,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch m.jobView {
 				case jobViewDetail:
 					m.jobView = jobViewList
-				case jobViewTaskDetail:
+				case jobViewRunDetail:
 					m.jobView = jobViewDetail
+				case jobViewTaskDetail:
+					m.jobView = m.taskOrigin
 				}
 			}
 		}
@@ -152,10 +196,34 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.jobDetail.err = msg.Err
 		return m, nil
 
+	case jobRunsMsg:
+		m.jobDetail.runs = msg.Runs
+		return m, nil
+
 	case jobRunDetailMsg:
-		m.taskDetail.loaded = true
-		m.taskDetail.detail = msg.Detail
-		m.taskDetail.err = msg.Err
+		// route to correct target based on current view
+		if m.jobView == jobViewRunDetail {
+			m.runDetail.loaded = true
+			m.runDetail.detail = msg.Detail
+			m.runDetail.err = msg.Err
+		} else if m.pendingTaskKey != "" && msg.Detail != nil {
+			// coming from jobDetail task selection — find task run ID and fetch its output
+			for _, t := range msg.Detail.Tasks {
+				if t.TaskKey == m.pendingTaskKey && t.RunID > 0 {
+					m.pendingTaskKey = ""
+					return m, fetchRunDetailCmd(m.jobSvc, t.RunID)
+				}
+			}
+			// task not found in this run — show what we have
+			m.taskDetail.loaded = true
+			m.taskDetail.detail = msg.Detail
+			m.taskDetail.err = msg.Err
+			m.pendingTaskKey = ""
+		} else {
+			m.taskDetail.loaded = true
+			m.taskDetail.detail = msg.Detail
+			m.taskDetail.err = msg.Err
+		}
 		return m, nil
 
 	// notebook messages
@@ -182,6 +250,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newModel, listCmd := m.jobDetail.Update(msg)
 			m.jobDetail = newModel.(JobDetailModel)
 			cmd = listCmd
+		case jobViewRunDetail:
+			newModel, listCmd := m.runDetail.Update(msg)
+			m.runDetail = newModel.(RunDetailModel)
+			cmd = listCmd
 		case jobViewTaskDetail:
 			newModel, listCmd := m.taskDetail.Update(msg)
 			m.taskDetail = newModel.(TaskDetailModel)
@@ -202,7 +274,7 @@ func (m AppModel) View() tea.View {
 		return tea.NewView("Loading...")
 	}
 
-	header := headerView(m.currentScreen, m.userProfile)
+	header := headerView(m.currentScreen, m.userProfile, m.version, m.width)
 	footer := footerView(m.width)
 	content := ""
 
@@ -215,6 +287,8 @@ func (m AppModel) View() tea.View {
 			content = m.jobList.View().Content
 		case jobViewDetail:
 			content = m.jobDetail.View().Content
+		case jobViewRunDetail:
+			content = m.runDetail.View().Content
 		case jobViewTaskDetail:
 			content = m.taskDetail.View().Content
 		}
@@ -233,29 +307,47 @@ func (m AppModel) View() tea.View {
 
 // --- header / footer ---
 
-func headerView(screen int, profile string) string {
+func headerView(screen int, profile string, version string, width int) string {
 	tabs := map[int]string{
 		screenClusterList:  "[1] Clusters",
 		screenJobList:      "[2] Jobs",
 		screenNotebookList: "[3] Notebooks",
 	}
 
-	style := lipgloss.NewStyle().
+	base := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("#FAFAFA")).
-		Background(lipgloss.Color("#7D56F4")).
-		Padding(0, 1)
+		Background(lipgloss.Color("#7D56F4"))
 
+	// left side
+	left := base.Render(" Databricks TUI v" + version)
+
+	// center (tabs)
+	center := base.Render(" " + tabs[screen] + " ")
+
+	// right side (shortcuts)
 	profileLabel := ""
 	if profile != "" && profile != "DEFAULT" {
-		profileLabel = fmt.Sprintf("  profile: %s", profile)
+		profileLabel = " profile:" + profile + " "
 	}
+	right := base.Render(profileLabel + "[/] search  [q] quit ")
 
-	return style.Render(" databricks-tui " + tabs[screen] + profileLabel + " ")
+	// assemble bar
+	bar := lipgloss.JoinHorizontal(lipgloss.Top,
+		left,
+		lipgloss.NewStyle().Background(lipgloss.Color("#7D56F4")).Width(1).Render(""),
+		center,
+	)
+	// push right side to end
+	rightWidth := lipgloss.Width(right)
+	spacer := lipgloss.NewStyle().Background(lipgloss.Color("#7D56F4")).Width(width - lipgloss.Width(bar) - rightWidth).Render(" ")
+	bar += spacer + right
+
+	return bar
 }
 
 func footerView(width int) string {
-	help := "[1/2/3] switch view  [↑/↓] navigate  [enter] select  [esc] back  [q] quit"
+	help := "[/] search  [↑/↓] navigate  [enter] select  [esc] back  [q] quit"
 	style := lipgloss.NewStyle().
 		Width(width).
 		Foreground(lipgloss.Color("#626262"))

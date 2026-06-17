@@ -303,7 +303,7 @@ func TestMapSDKRunOutput(t *testing.T) {
 		Error:          "division by zero",
 		ErrorTrace:     "line 12",
 	}
-	result := mapSDKRunOutput(o)
+	result := mapSDKRunOutput(o, nil)
 	assert.Equal(t, "42", result.NotebookResult)
 	assert.Equal(t, "log content", result.Logs)
 	assert.Equal(t, "division by zero", result.ErrorMsg)
@@ -313,8 +313,8 @@ func TestMapSDKRunOutput(t *testing.T) {
 }
 
 func TestMapSDKRunOutput_Nil(t *testing.T) {
-	result := mapSDKRunOutput(nil)
-	assert.Empty(t, result.Logs)
+	result := mapSDKRunOutput(nil, nil)
+	assert.Equal(t, "output not available", result.Logs)
 	assert.False(t, result.HasLogs())
 }
 

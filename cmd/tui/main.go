@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -15,9 +16,17 @@ import (
 	"github.com/youenchene/databricks-tui/internal/ports/tui"
 )
 
+const version = "0.1.0"
+
 func main() {
-	// setup structured logging (Bubble Tea captures stdout, slog goes to stderr)
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	// setup structured logging to file (stderr messes up the TUI)
+	logDir := filepath.Join(os.TempDir(), "databricks-tui")
+	os.MkdirAll(logDir, 0755)
+	logFile, err := os.OpenFile(filepath.Join(logDir, "tui.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err == nil {
+		slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelInfo})))
+		defer logFile.Close()
+	}
 
 	profile := "DEFAULT"
 	if len(os.Args) > 1 {
@@ -42,7 +51,7 @@ func main() {
 	notebookSvc := notebook.NewService(notebookRepo)
 
 	// Launch TUI
-	app := tui.NewAppModel(clusterSvc, jobSvc, notebookSvc, profile)
+	app := tui.NewAppModel(clusterSvc, jobSvc, notebookSvc, profile, version)
 	p := tea.NewProgram(app)
 
 	if _, err := p.Run(); err != nil {

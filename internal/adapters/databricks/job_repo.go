@@ -3,6 +3,8 @@ package databricks
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/databricks/databricks-sdk-go/service/jobs"
@@ -96,7 +98,19 @@ func (r *JobRepo) GetRunDetail(ctx context.Context, runID int64) (*job.RunDetail
 		tasks = append(tasks, mapSDKRunTask(t))
 	}
 
-	output, _ := r.client.GetRunOutput(ctx, runID)
+	// GetRunOutput on parent runs with multiple tasks is not supported by the API.
+	// Output will be fetched per-task when the user zooms into individual task runs.
+	var output job.RunOutputInfo
+	if len(run.Tasks) <= 1 {
+		sdkOut, outputErr := r.client.GetRunOutput(ctx, runID)
+		if outputErr != nil {
+			slog.Warn("get run output failed", "runID", runID, "error", outputErr)
+		}
+		output = mapSDKRunOutput(sdkOut, outputErr)
+	} else {
+		slog.Info("skipping parent run output (multi-task run)", "runID", runID, "tasks", len(run.Tasks))
+		output = job.RunOutputInfo{Logs: "multi-task run — zoom into each task for output"}
+	}
 
 	rd := job.NewRunDetail(job.Run{
 		RunID:   run.RunId,
@@ -104,7 +118,7 @@ func (r *JobRepo) GetRunDetail(ctx context.Context, runID int64) (*job.RunDetail
 		State:   mapJobRunState(run.State),
 		StartAt: msToTime(run.StartTime),
 		EndAt:   msToTime(run.EndTime),
-	}, tasks, mapSDKRunOutput(output))
+	}, tasks, output)
 	return &rd, nil
 }
 
@@ -167,6 +181,7 @@ func mapSDKTask(t jobs.Task) job.Task {
 // mapSDKRunTask maps an SDK RunTask to domain TaskRun.
 func mapSDKRunTask(t jobs.RunTask) job.TaskRun {
 	return job.TaskRun{
+		RunID:       t.RunId,
 		TaskKey:     t.TaskKey,
 		State:       mapJobRunState(t.State),
 		StartAt:     msToTime(t.StartTime),
@@ -176,16 +191,22 @@ func mapSDKRunTask(t jobs.RunTask) job.TaskRun {
 }
 
 // mapSDKRunOutput maps an SDK RunOutput to domain RunOutputInfo.
-func mapSDKRunOutput(o *jobs.RunOutput) job.RunOutputInfo {
+func mapSDKRunOutput(o *jobs.RunOutput, fetchErr error) job.RunOutputInfo {
 	if o == nil {
-		return job.RunOutputInfo{}
+		msg := "output not available"
+		if fetchErr != nil {
+			msg = fetchErr.Error()
+		}
+		return job.RunOutputInfo{Logs: msg}
 	}
+	truncated := len(o.Logs) > 0 && !strings.HasSuffix(o.Logs, "\n")
 	return job.RunOutputInfo{
 		NotebookResult: runOutputNotebook(o),
 		SQLResult:      runOutputSQL(o),
 		Logs:           o.Logs,
 		ErrorMsg:       o.Error,
 		ErrorTrace:     o.ErrorTrace,
+		LogTruncated:   truncated,
 	}
 }
 

@@ -72,6 +72,7 @@ func (t Task) TaskType() string {
 
 // TaskRun represents a task execution within a job run.
 type TaskRun struct {
+	RunID       int64 // task's own run ID (for fetching output)
 	TaskKey     string
 	State       State
 	StartAt     time.Time
@@ -107,11 +108,20 @@ type RunOutputInfo struct {
 	Logs           string
 	ErrorMsg       string
 	ErrorTrace     string
+	LogTruncated   bool // true when logs were truncated
 }
 
 // HasLogs returns true when there are logs available.
 func (o RunOutputInfo) HasLogs() bool {
-	return o.Logs != ""
+	// exclude injected error messages
+	if o.Logs == "" || o.Logs == "output not available" {
+		return false
+	}
+	// also exclude error strings (like "Get https://... context deadline exceeded")
+	if len(o.Logs) > 4 && o.Logs[:4] == "Get " {
+		return false
+	}
+	return true
 }
 
 // HasError returns true when the run had an error.
