@@ -52,6 +52,24 @@ databricks-tui                          # uses DEFAULT
 
 The Databricks SDK handles credential resolution automatically (PAT, OAuth, Azure SP, Azure CLI, etc.).
 
+## Git Workflow
+
+- **Feature branches** — All work happens on branches (`feature/description`). Never push directly to `main`.
+- **PRs mandatory** — Every change lands via pull request. No direct commits to `main`.
+- **Branch naming** — `feature/<slug>`, `fix/<slug>`, `chore/<slug>`
+- **Commit style** — Conventional commits with emoji: `✨ feat: ...`, `🐛 fix: ...`, `♻️ refactor: ...`
+
+**Workflow:**
+```bash
+git checkout -b feature/my-feature
+# ... make changes ...
+make test
+git add .
+git commit -m "✨ feat: description"
+git push -u origin feature/my-feature
+# Create PR on GitHub → merge
+```
+
 ## Conventions
 
 - **Go idioms** — Explicit error handling, small interfaces, accept interfaces / return structs
