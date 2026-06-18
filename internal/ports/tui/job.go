@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,6 +46,11 @@ type jobRunsMsg struct {
 type jobRunDetailMsg struct {
 	Detail *job.RunDetail
 	Err    error
+}
+
+type clipboardMsg struct {
+	ok  bool
+	err error
 }
 
 // --- items ---
@@ -378,30 +384,78 @@ func (m JobDetailModel) SelectedRunID() int64 {
 // --- RunDetailModel ---
 
 type RunDetailModel struct {
-	detail *job.RunDetail
-	loaded bool
-	err    error
-	runID  int64
-	cursor int // task cursor within the run
+	detail    *job.RunDetail
+	loaded    bool
+	err       error
+	runID     int64
+	cursor    int // task cursor within the run
+	logFocus  bool
+	logOffset int
+	copied    bool
+	winWidth  int
+	winHeight int
 }
 
-func NewRunDetailModel(runID int64) RunDetailModel {
-	return RunDetailModel{runID: runID}
+func NewRunDetailModel(runID int64, winHeight int) RunDetailModel {
+	return RunDetailModel{runID: runID, winHeight: winHeight}
 }
 
 func (m RunDetailModel) Init() tea.Cmd { return nil }
 
 func (m RunDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case clipboardMsg:
+		m.copied = msg.ok && msg.err == nil
+
+	case tea.WindowSizeMsg:
+		m.winWidth = msg.Width
+		m.winHeight = msg.Height - 2 // header + footer
+
 	case tea.KeyPressMsg:
+		m.copied = false // dismiss copy confirmation on any key
+
 		switch msg.String() {
+		case "y":
+			canCopy := m.logFocus || (m.detail != nil && len(m.detail.Tasks) == 0)
+			if canCopy && m.detail != nil && (m.detail.Output.Logs != "" || m.detail.Output.HasError()) {
+				return m, copyLogsCmd(buildClipboardContent(m.detail.Output))
+			}
+		case "tab":
+			if m.detail != nil && len(m.detail.Tasks) > 0 {
+				m.logFocus = !m.logFocus
+			}
 		case "up", "k":
-			if m.cursor > 0 {
+			if m.logFocus {
+				if m.logOffset > 0 {
+					m.logOffset--
+				}
+			} else if m.cursor > 0 {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.detail != nil && m.cursor < len(m.detail.Tasks)-1 {
+			if m.logFocus {
+				m.logOffset++
+			} else if m.detail != nil && m.cursor < len(m.detail.Tasks)-1 {
 				m.cursor++
+			}
+		case "pgup":
+			if m.logFocus {
+				m.logOffset -= 10
+				if m.logOffset < 0 {
+					m.logOffset = 0
+				}
+			}
+		case "pgdown":
+			if m.logFocus {
+				m.logOffset += 10
+			}
+		case "home":
+			if m.logFocus {
+				m.logOffset = 0
+			}
+		case "end":
+			if m.logFocus {
+				m.logOffset = 999999 // clamped in View()
 			}
 		}
 	}
@@ -454,29 +508,97 @@ func (m RunDetailModel) View() tea.View {
 		}
 	}
 
-	// logs
-	s += "\n" + title.Render("Output:") + "\n"
-	if d.Output.HasLogs() {
-		lines := d.Output.FirstLines(15)
-		for _, l := range lines {
-			s += "  " + l + "\n"
+	// logs — combined with errors into a single scrollable area
+	if d.Output.HasLogs() || d.Output.Logs != "" || d.Output.HasError() {
+		s += "\n" + title.Render("Output:") + "\n"
+
+		// Build combined content: logs + errors
+		var content strings.Builder
+		if d.Output.HasLogs() {
+			content.WriteString(d.Output.Logs)
+			if d.Output.LogTruncated {
+				content.WriteString("\n  ... (truncated by API)")
+			}
+		} else if d.Output.Logs != "" {
+			content.WriteString(d.Output.Logs)
 		}
-		if d.Output.LogTruncated {
-			s += "  ... (truncated)\n"
+		if d.Output.HasError() {
+			if content.Len() > 0 {
+				content.WriteString("\n")
+			}
+			content.WriteString("[ERROR] ")
+			content.WriteString(d.Output.ErrorMsg)
+			if d.Output.ErrorTrace != "" {
+				content.WriteString("\n")
+				content.WriteString(d.Output.ErrorTrace)
+			}
 		}
-	} else if d.Output.Logs != "" {
-		s += "  " + d.Output.Logs + "\n"
+		logLines := strings.Split(content.String(), "\n")
+
+		// Auto-focus logs when there are no tasks to navigate
+		noTasks := len(d.Tasks) == 0
+		if noTasks {
+			m.logFocus = true
+		}
+
+		// Calculate viewport height: use at least half the window
+		linesBefore := strings.Count(s, "\n")
+		afterLines := 1 // only the help line after logs
+		vpHeight := m.winHeight - linesBefore - afterLines
+		minVp := m.winHeight / 2
+		if vpHeight < minVp {
+			vpHeight = minVp
+		}
+		// But never overflow the window
+		if linesBefore+vpHeight+afterLines > m.winHeight {
+			vpHeight = m.winHeight - linesBefore - afterLines
+		}
+		if vpHeight < 8 {
+			vpHeight = 8
+		}
+
+		// Clamp offset
+		maxOffset := len(logLines) - vpHeight
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if m.logOffset > maxOffset {
+			m.logOffset = maxOffset
+		}
+		if m.logOffset < 0 {
+			m.logOffset = 0
+		}
+
+		end := m.logOffset + vpHeight
+		if end > len(logLines) {
+			end = len(logLines)
+		}
+
+		// Focus hint
+		if m.copied {
+			s += lipgloss.NewStyle().Foreground(lipgloss.Color("#4ECB71")).Render("  ✓ Copied to clipboard!") + "\n"
+		} else if noTasks {
+			s += lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render("  [y] copy all  [↑↓/pgup/pgdn] scroll") + "\n"
+		} else if m.logFocus {
+			s += lipgloss.NewStyle().Foreground(lipgloss.Color("#F0A500")).Render("  ▶ scroll mode [tab] tasks  [y] copy all") + "\n"
+		} else {
+			s += lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render("  [tab] focus logs  [y] copy all") + "\n"
+		}
+
+		for i := m.logOffset; i < end; i++ {
+			s += "  " + logLines[i] + "\n"
+		}
+
+		if len(logLines) > vpHeight {
+			pos := fmt.Sprintf("── %d/%d ──", end, len(logLines))
+			s += lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render(pos) + "\n"
+		}
 	} else {
+		s += "\n" + title.Render("Output:") + "\n"
 		s += "  (no output)\n"
 	}
-	if d.Output.HasError() {
-		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4672")).Render("Error: "+d.Output.ErrorMsg) + "\n"
-		if d.Output.ErrorTrace != "" {
-			s += "  " + d.Output.ErrorTrace + "\n"
-		}
-	}
 
-	s += "\n[esc/backspace] back to job"
+	s += "\n[esc/backspace] back to job  [y] copy all logs"
 	return tea.NewView(s)
 }
 
@@ -497,20 +619,65 @@ func (m RunDetailModel) SelectedTaskKey() string {
 // --- TaskDetailModel ---
 
 type TaskDetailModel struct {
-	jobName string
-	taskKey string
-	detail  *job.RunDetail
-	loaded  bool
-	err     error
+	jobName   string
+	taskKey   string
+	detail    *job.RunDetail
+	loaded    bool
+	err       error
+	logOffset int
+	copied    bool
+	winWidth  int
+	winHeight int
 }
 
-func NewTaskDetailModel(jobName, taskKey string) TaskDetailModel {
-	return TaskDetailModel{jobName: jobName, taskKey: taskKey}
+func NewTaskDetailModel(jobName, taskKey string, winHeight int) TaskDetailModel {
+	return TaskDetailModel{
+		jobName:   jobName,
+		taskKey:   taskKey,
+		winHeight: winHeight,
+	}
 }
 
 func (m TaskDetailModel) Init() tea.Cmd { return nil }
 
-func (m TaskDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
+func (m TaskDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case clipboardMsg:
+		m.copied = msg.ok && msg.err == nil
+
+	case tea.WindowSizeMsg:
+		m.winWidth = msg.Width
+		m.winHeight = msg.Height - 2 // header + footer
+
+	case tea.KeyPressMsg:
+		m.copied = false // dismiss copy confirmation on any key
+
+		switch msg.String() {
+		case "y":
+			if m.detail != nil && (m.detail.Output.Logs != "" || m.detail.Output.HasError()) {
+				return m, copyLogsCmd(buildClipboardContent(m.detail.Output))
+			}
+		case "up", "k":
+			if m.logOffset > 0 {
+				m.logOffset--
+			}
+		case "down", "j":
+			m.logOffset++
+		case "pgup":
+			m.logOffset -= 10
+			if m.logOffset < 0 {
+				m.logOffset = 0
+			}
+		case "pgdown":
+			m.logOffset += 10
+		case "home":
+			m.logOffset = 0
+		case "end":
+			m.logOffset = 999999 // clamped in View()
+		}
+	}
+	return m, nil
+}
 
 func (m TaskDetailModel) View() tea.View {
 	if !m.loaded {
@@ -547,24 +714,78 @@ func (m TaskDetailModel) View() tea.View {
 		s += "\n"
 	}
 
-	s += "\n" + title.Render("Output:") + "\n"
-	if d.Output.HasLogs() {
-		for _, l := range d.Output.FirstLines(20) {
-			s += "  " + l + "\n"
+	// logs — combined with errors into a single scrollable area
+	if d.Output.HasLogs() || d.Output.Logs != "" || d.Output.HasError() {
+		s += "\n" + title.Render("Output:") + "\n"
+
+		var content strings.Builder
+		if d.Output.HasLogs() {
+			content.WriteString(d.Output.Logs)
+			if d.Output.LogTruncated {
+				content.WriteString("\n  ... (truncated by API)")
+			}
+		} else if d.Output.Logs != "" {
+			content.WriteString(d.Output.Logs)
 		}
-		if d.Output.LogTruncated {
-			s += "  ... (truncated)\n"
+		if d.Output.HasError() {
+			if content.Len() > 0 {
+				content.WriteString("\n")
+			}
+			content.WriteString("[ERROR] ")
+			content.WriteString(d.Output.ErrorMsg)
+			if d.Output.ErrorTrace != "" {
+				content.WriteString("\n")
+				content.WriteString(d.Output.ErrorTrace)
+			}
 		}
-	} else if d.Output.Logs != "" {
-		s += "  " + d.Output.Logs + "\n"
+		logLines := strings.Split(content.String(), "\n")
+
+		linesBefore := strings.Count(s, "\n")
+		afterLines := 1 // only the help line after logs
+		vpHeight := m.winHeight - linesBefore - afterLines
+		minVp := m.winHeight / 2
+		if vpHeight < minVp {
+			vpHeight = minVp
+		}
+		if vpHeight < 8 {
+			vpHeight = 8
+		}
+
+		maxOffset := len(logLines) - vpHeight
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if m.logOffset > maxOffset {
+			m.logOffset = maxOffset
+		}
+		if m.logOffset < 0 {
+			m.logOffset = 0
+		}
+
+		end := m.logOffset + vpHeight
+		if end > len(logLines) {
+			end = len(logLines)
+		}
+
+		if m.copied {
+			s += lipgloss.NewStyle().Foreground(lipgloss.Color("#4ECB71")).Render("  ✓ Copied to clipboard!") + "\n"
+		} else {
+			s += lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render("  [y] copy all  [↑↓/pgup/pgdn] scroll") + "\n"
+		}
+		for i := m.logOffset; i < end; i++ {
+			s += "  " + logLines[i] + "\n"
+		}
+
+		if len(logLines) > vpHeight {
+			pos := fmt.Sprintf("── %d/%d ──", end, len(logLines))
+			s += lipgloss.NewStyle().Foreground(lipgloss.Color("#626262")).Render(pos) + "\n"
+		}
 	} else {
+		s += "\n" + title.Render("Output:") + "\n"
 		s += "  (no output)\n"
 	}
-	if d.Output.HasError() {
-		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4672")).Render("Error: "+d.Output.ErrorMsg) + "\n"
-	}
 
-	s += "\n[esc/backspace] back"
+	s += "\n[esc/backspace] back  [y] copy all logs"
 	return tea.NewView(s)
 }
 
@@ -624,6 +845,35 @@ func fetchRunDetailCmd(svc *job.Service, runID int64) tea.Cmd {
 		}
 		return jobRunDetailMsg{Detail: rd}
 	}
+}
+
+// copyLogsCmd copies text to the system clipboard.
+func copyLogsCmd(text string) tea.Cmd {
+	return func() tea.Msg {
+		cmd := exec.Command("pbcopy")
+		cmd.Stdin = strings.NewReader(text)
+		if err := cmd.Run(); err != nil {
+			return clipboardMsg{err: err}
+		}
+		return clipboardMsg{ok: true}
+	}
+}
+
+// buildClipboardContent builds raw log content for clipboard copy.
+func buildClipboardContent(o job.RunOutputInfo) string {
+	var b strings.Builder
+	b.WriteString(o.Logs)
+	if o.HasError() {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(o.ErrorMsg)
+		if o.ErrorTrace != "" {
+			b.WriteString("\n")
+			b.WriteString(o.ErrorTrace)
+		}
+	}
+	return b.String()
 }
 
 // --- helpers ---
