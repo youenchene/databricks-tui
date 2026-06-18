@@ -39,10 +39,10 @@ jobs:
           # Check if tag exists, append micro if so
           if git rev-parse "v$CALVER" >/dev/null 2>&1; then
             MICRO=1
-            while git rev-parse "v$CALVER.$MICRO" >/dev/null 2>&1; do
+            while git rev-parse "v$CALVER-$MICRO" >/dev/null 2>&1; do
               MICRO=$((MICRO + 1))
             done
-            CALVER="$CALVER.$MICRO"
+            CALVER="$CALVER-$MICRO"
           fi
           echo "version=$CALVER" >> $GITHUB_OUTPUT
           echo "tag=v$CALVER" >> $GITHUB_OUTPUT

@@ -198,6 +198,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case jobRunsMsg:
 		m.jobDetail.runs = msg.Runs
+		if msg.Err == nil && len(msg.Runs) > 0 {
+			return m, fetchJobLatestRunTasksCmd(m.jobSvc, msg.Runs[0].RunID)
+		}
 		return m, nil
 
 	case jobRunDetailMsg:
@@ -223,6 +226,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskDetail.loaded = true
 			m.taskDetail.detail = msg.Detail
 			m.taskDetail.err = msg.Err
+		}
+		return m, nil
+
+	case jobLatestRunTasksMsg:
+		if msg.Err == nil {
+			m.jobDetail.taskStatuses = msg.Tasks
 		}
 		return m, nil
 

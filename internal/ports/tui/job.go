@@ -53,6 +53,11 @@ type clipboardMsg struct {
 	err error
 }
 
+type jobLatestRunTasksMsg struct {
+	Tasks map[string]job.TaskRun
+	Err   error
+}
+
 // --- items ---
 
 type JobItem struct {
@@ -246,14 +251,15 @@ func saveFavorites(favs map[int64]bool) {
 // --- JobDetailModel ---
 
 type JobDetailModel struct {
-	detail   *job.JobDetail
-	runs     []job.Run
-	focusRuns bool // tab toggles between runs cursor and tasks cursor
-	runCursor int
-	taskCursor int
-	loaded     bool
-	err        error
-	jobID      int64
+	detail       *job.JobDetail
+	runs         []job.Run
+	taskStatuses map[string]job.TaskRun // taskKey → last run status
+	focusRuns    bool                    // tab toggles between runs cursor and tasks cursor
+	runCursor    int
+	taskCursor   int
+	loaded       bool
+	err          error
+	jobID        int64
 }
 
 func NewJobDetailModel(jobID int64) JobDetailModel {
@@ -359,7 +365,14 @@ func (m JobDetailModel) View() tea.View {
 			if len(t.DependsOn) > 0 {
 				deps = " ← [" + strings.Join(t.DependsOn, ",") + "]"
 			}
-			s += fmt.Sprintf("  %s %s | %s%s\n", cursor, t.TaskKey, t.TaskType(), deps)
+			// enrich with last run status if available
+			statusIcon := ""
+			statusPart := ""
+			if tr, ok := m.taskStatuses[t.TaskKey]; ok {
+				statusIcon = stateIcon(tr.State) + " "
+				statusPart = " — " + string(tr.State)
+			}
+			s += fmt.Sprintf("  %s %s%s | %s%s%s\n", cursor, statusIcon, t.TaskKey, t.TaskType(), statusPart, deps)
 		}
 	}
 
@@ -847,6 +860,25 @@ func fetchRunDetailCmd(svc *job.Service, runID int64) tea.Cmd {
 			return jobRunDetailMsg{Err: err}
 		}
 		return jobRunDetailMsg{Detail: rd}
+	}
+}
+
+// fetchJobLatestRunTasksCmd fetches the latest run's task executions
+// and returns them keyed by TaskKey for enriching the job detail task breakdown.
+func fetchJobLatestRunTasksCmd(svc *job.Service, runID int64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		rd, err := svc.GetRunDetail(ctx, runID)
+		if err != nil {
+			slog.Error("fetch latest run tasks failed", "runID", runID, "error", err)
+			return jobLatestRunTasksMsg{Err: err}
+		}
+		tasks := make(map[string]job.TaskRun, len(rd.Tasks))
+		for _, t := range rd.Tasks {
+			tasks[t.TaskKey] = t
+		}
+		return jobLatestRunTasksMsg{Tasks: tasks}
 	}
 }
 
