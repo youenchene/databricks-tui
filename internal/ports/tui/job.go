@@ -396,8 +396,8 @@ type RunDetailModel struct {
 	winHeight int
 }
 
-func NewRunDetailModel(runID int64, winHeight int) RunDetailModel {
-	return RunDetailModel{runID: runID, winHeight: winHeight}
+func NewRunDetailModel(runID int64, winWidth, winHeight int) RunDetailModel {
+	return RunDetailModel{runID: runID, winWidth: winWidth, winHeight: winHeight}
 }
 
 func (m RunDetailModel) Init() tea.Cmd { return nil }
@@ -533,7 +533,8 @@ func (m RunDetailModel) View() tea.View {
 				content.WriteString(d.Output.ErrorTrace)
 			}
 		}
-		logLines := strings.Split(content.String(), "\n")
+		rawLines := strings.Split(content.String(), "\n")
+		logLines := wrapLogLines(rawLines, m.winWidth)
 
 		// Auto-focus logs when there are no tasks to navigate
 		noTasks := len(d.Tasks) == 0
@@ -630,10 +631,11 @@ type TaskDetailModel struct {
 	winHeight int
 }
 
-func NewTaskDetailModel(jobName, taskKey string, winHeight int) TaskDetailModel {
+func NewTaskDetailModel(jobName, taskKey string, winWidth, winHeight int) TaskDetailModel {
 	return TaskDetailModel{
 		jobName:   jobName,
 		taskKey:   taskKey,
+		winWidth:  winWidth,
 		winHeight: winHeight,
 	}
 }
@@ -738,7 +740,8 @@ func (m TaskDetailModel) View() tea.View {
 				content.WriteString(d.Output.ErrorTrace)
 			}
 		}
-		logLines := strings.Split(content.String(), "\n")
+		rawLines := strings.Split(content.String(), "\n")
+		logLines := wrapLogLines(rawLines, m.winWidth)
 
 		linesBefore := strings.Count(s, "\n")
 		afterLines := 1 // only the help line after logs

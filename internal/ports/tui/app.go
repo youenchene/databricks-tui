@@ -124,7 +124,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// enter on a run → open run detail
 						id := m.jobDetail.SelectedRunID()
 						if id > 0 {
-							m.runDetail = NewRunDetailModel(id, m.height-2)
+							m.runDetail = NewRunDetailModel(id, m.width, m.height-2)
 							m.jobView = jobViewRunDetail
 							return m, fetchRunDetailCmd(m.jobSvc, id)
 						}
@@ -135,7 +135,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							runID := m.jobDetail.SelectedRunID()
 							if key != "" && runID > 0 {
 								m.pendingTaskKey = key
-								m.taskDetail = NewTaskDetailModel(m.jobDetail.detail.Job.Name, key, m.height-2)
+								m.taskDetail = NewTaskDetailModel(m.jobDetail.detail.Job.Name, key, m.width, m.height-2)
 								m.taskOrigin = jobViewDetail
 								m.jobView = jobViewTaskDetail
 								return m, fetchRunDetailCmd(m.jobSvc, runID)
@@ -147,8 +147,8 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					key := m.runDetail.SelectedTaskKey()
 					taskRunID := m.runDetail.SelectedTaskRunID()
 					if key != "" && m.runDetail.detail != nil {
-						m.taskDetail = NewTaskDetailModel(
-							fmt.Sprintf("run %d", m.runDetail.detail.Run.RunID), key, m.height-2)
+					m.taskDetail = NewTaskDetailModel(
+						fmt.Sprintf("run %d", m.runDetail.detail.Run.RunID), key, m.width, m.height-2)
 						m.taskOrigin = jobViewRunDetail
 						m.jobView = jobViewTaskDetail
 						// fetch task-specific output
