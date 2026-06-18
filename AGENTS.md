@@ -163,6 +163,21 @@ go get charm.land/lipgloss/v2
 go get github.com/databricks/databricks-sdk-go
 ```
 
+## Build & Test (via Makefile)
+
+Always use `make` targets — never run `go build` or `go test` directly:
+
+| Command | What it does |
+|---------|-------------|
+| `make build` | Build binary to `bin/databricks-tui` |
+| `make test` | Run all tests (unit + adapter + architecture) |
+| `make test-unit` | Domain unit tests only |
+| `make test-adapter` | Adapter mapping tests |
+| `make test-arch` | Architecture compliance tests |
+| `make lint` | Run golangci-lint |
+| `make tidy` | Run `go mod tidy` |
+| `make clean` | Remove `bin/` and `dist/` |
+
 ## Agent Instructions
 
 When working on this repo:
@@ -171,3 +186,4 @@ When working on this repo:
 3. Each new workspace feature (clusters, jobs, notebooks, etc.) should be its own use case
 4. Write tests alongside code — domain logic must be testable in isolation
 5. Use Bubble Tea v2 APIs (`tea.KeyPressMsg`, not `tea.KeyMsg`; `charm.land/bubbletea/v2` import path)
+6. Always use `make` targets for build and test — never run `go build` or `go test` directly

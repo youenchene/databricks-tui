@@ -6,6 +6,29 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// wrapLogLines wraps log lines to fit within the terminal width.
+// Each line receives a "  " prefix during rendering, so the effective width is winWidth - 2.
+// If winWidth is too small (< 20), lines are returned unchanged.
+func wrapLogLines(lines []string, winWidth int) []string {
+	wrapWidth := winWidth - 2
+	if wrapWidth < 20 {
+		return lines
+	}
+	var wrapped []string
+	for _, line := range lines {
+		if len(line) <= wrapWidth {
+			wrapped = append(wrapped, line)
+			continue
+		}
+		for len(line) > wrapWidth {
+			wrapped = append(wrapped, line[:wrapWidth])
+			line = line[wrapWidth:]
+		}
+		wrapped = append(wrapped, line)
+	}
+	return wrapped
+}
+
 // stateColor returns a lipgloss style colored by cluster/job state.
 func stateColor(state string) lipgloss.Style {
 	switch state {
