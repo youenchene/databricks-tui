@@ -100,6 +100,17 @@ func TestRun_ZeroEndAt(t *testing.T) {
 	assert.True(t, r.EndAt.IsZero(), "running job should have zero EndAt")
 }
 
+func TestJob_LastRunTime_ZeroWhenNeverRun(t *testing.T) {
+	j := job.Job{ID: 1, Name: "new-job"}
+	assert.True(t, j.LastRunTime.IsZero(), "never-run job should have zero LastRunTime")
+}
+
+func TestJob_LastRunTime_Set(t *testing.T) {
+	ts := time.Date(2026, 6, 25, 14, 30, 0, 0, time.UTC)
+	j := job.Job{ID: 1, Name: "etl", LastRunTime: ts}
+	assert.Equal(t, ts, j.LastRunTime)
+}
+
 func TestState_Constants(t *testing.T) {
 	tests := []struct {
 		name  string

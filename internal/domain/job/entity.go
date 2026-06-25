@@ -21,11 +21,12 @@ const (
 
 // Job represents a Databricks job definition.
 type Job struct {
-	ID        int64
-	Name      string
-	Schedule  string // cron expression or empty
-	Creator   string
-	CreatedAt time.Time
+	ID          int64
+	Name        string
+	Schedule    string // cron expression or empty
+	Creator     string
+	CreatedAt   time.Time
+	LastRunTime time.Time // zero if never run
 }
 
 // Run represents a single execution of a job.
