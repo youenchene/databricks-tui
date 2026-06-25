@@ -190,6 +190,13 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.jobList.err = msg.Err
 		return m, nil
 
+	case refreshJobDetailMsg:
+		id := m.jobDetail.jobID
+		return m, tea.Batch(
+			fetchJobDetailCmd(m.jobSvc, id),
+			fetchJobRunsCmd(m.jobSvc, id),
+		)
+
 	case jobDetailMsg:
 		m.jobDetail.loaded = true
 		m.jobDetail.detail = msg.Detail
@@ -201,6 +208,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil && len(msg.Runs) > 0 {
 			return m, fetchJobLatestRunTasksCmd(m.jobSvc, msg.Runs[0].RunID)
 		}
+		m.jobDetail.refreshing = false
 		return m, nil
 
 	case jobRunDetailMsg:
@@ -230,6 +238,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case jobLatestRunTasksMsg:
+		m.jobDetail.refreshing = false
 		if msg.Err == nil {
 			m.jobDetail.taskStatuses = msg.Tasks
 		}

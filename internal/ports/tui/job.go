@@ -58,6 +58,9 @@ type jobLatestRunTasksMsg struct {
 	Err   error
 }
 
+// refreshJobDetailMsg signals the app model to refetch job data.
+type refreshJobDetailMsg struct{}
+
 // --- items ---
 
 type JobItem struct {
@@ -267,6 +270,7 @@ type JobDetailModel struct {
 	runOffset    int // first visible run index
 	taskCursor   int
 	loaded       bool
+	refreshing   bool
 	err          error
 	jobID        int64
 }
@@ -283,6 +287,11 @@ func (m JobDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "tab":
 			m.focusRuns = !m.focusRuns
+		case "r":
+			if !m.refreshing {
+				m.refreshing = true
+				return m, func() tea.Msg { return refreshJobDetailMsg{} }
+			}
 		case "up", "k":
 			if m.focusRuns {
 				if m.runCursor > 0 {
@@ -356,7 +365,16 @@ func (m JobDetailModel) View() tea.View {
 	highlight := lipgloss.NewStyle().Foreground(lipgloss.Color("#F0A500"))
 	d := m.detail
 
-	s := title.Render("Job: "+d.Job.Name) + "\n\n"
+	s := title.Render("Job: "+d.Job.Name)
+
+	// refresh indicator
+	refreshHint := lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
+	if m.refreshing {
+		s += "  " + refreshHint.Render("⟳ refreshing...")
+	} else {
+		s += "  " + refreshHint.Render("[r] refresh")
+	}
+	s += "\n\n"
 
 	// metadata
 	s += fmt.Sprintf("  ID:       %d\n", d.Job.ID)
