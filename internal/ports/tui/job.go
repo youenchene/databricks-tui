@@ -64,6 +64,7 @@ type JobItem struct {
 	ID       int64
 	Name     string
 	Schedule string
+	LastRun  string // formatted last run time, or "never"
 }
 
 // --- JobListModel ---
@@ -108,7 +109,8 @@ func (m JobListModel) filteredItems() []JobItem {
 	for _, it := range items {
 		if strings.Contains(strings.ToLower(it.Name), q) ||
 			strings.Contains(fmt.Sprint(it.ID), q) ||
-			strings.Contains(strings.ToLower(it.Schedule), q) {
+			strings.Contains(strings.ToLower(it.Schedule), q) ||
+			strings.Contains(strings.ToLower(it.LastRun), q) {
 			out = append(out, it)
 		}
 	}
@@ -208,7 +210,11 @@ func (m JobListModel) View() tea.View {
 		if item.Schedule != "" {
 			sched = item.Schedule
 		}
-		s += cursor + fav + " " + item.Name + " | " + sched + "\n"
+		last := ""
+		if item.LastRun != "never" {
+			last = " | last: " + item.LastRun
+		}
+		s += cursor + fav + " " + item.Name + " | " + sched + last + "\n"
 	}
 	if m.favsOnly {
 		s += "\n  ★ favorites only (F to show all)"
@@ -366,13 +372,17 @@ func (m JobDetailModel) View() tea.View {
 				deps = " ← [" + strings.Join(t.DependsOn, ",") + "]"
 			}
 			// enrich with last run status if available
+			dateCol := "                    " // 20 spaces, matches "(YYYY-MM-DD HH:MM) "
 			statusIcon := ""
 			statusPart := ""
 			if tr, ok := m.taskStatuses[t.TaskKey]; ok {
 				statusIcon = stateIcon(tr.State) + " "
 				statusPart = " — " + string(tr.State)
+				if !tr.StartAt.IsZero() {
+					dateCol = "(" + tr.StartAt.Format("2006-01-02 15:04") + ") "
+				}
 			}
-			s += fmt.Sprintf("  %s %s%s | %s%s%s\n", cursor, statusIcon, t.TaskKey, t.TaskType(), statusPart, deps)
+			s += fmt.Sprintf("  %s%s%s%s | %s%s%s\n", cursor, dateCol, statusIcon, t.TaskKey, t.TaskType(), statusPart, deps)
 		}
 	}
 
@@ -818,7 +828,11 @@ func fetchJobsCmd(svc *job.Service) tea.Cmd {
 		}
 		items := make([]JobItem, len(jobs))
 		for i, j := range jobs {
-			items[i] = JobItem{ID: j.ID, Name: j.Name, Schedule: j.Schedule}
+			lastRun := "never"
+			if !j.LastRunTime.IsZero() {
+				lastRun = j.LastRunTime.Format("2006-01-02 15:04")
+			}
+			items[i] = JobItem{ID: j.ID, Name: j.Name, Schedule: j.Schedule, LastRun: lastRun}
 		}
 		return jobsMsg{Items: items}
 	}

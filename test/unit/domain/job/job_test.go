@@ -100,6 +100,17 @@ func TestRun_ZeroEndAt(t *testing.T) {
 	assert.True(t, r.EndAt.IsZero(), "running job should have zero EndAt")
 }
 
+func TestJob_LastRunTime_ZeroWhenNeverRun(t *testing.T) {
+	j := job.Job{ID: 1, Name: "new-job"}
+	assert.True(t, j.LastRunTime.IsZero(), "never-run job should have zero LastRunTime")
+}
+
+func TestJob_LastRunTime_Set(t *testing.T) {
+	ts := time.Date(2026, 6, 25, 14, 30, 0, 0, time.UTC)
+	j := job.Job{ID: 1, Name: "etl", LastRunTime: ts}
+	assert.Equal(t, ts, j.LastRunTime)
+}
+
 func TestState_Constants(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -339,6 +350,54 @@ func TestNewJobDetail(t *testing.T) {
 	jd := job.NewJobDetail(job.Job{ID: 1, Name: "test"}, tasks)
 	assert.Equal(t, int64(1), jd.Job.ID)
 	assert.Len(t, jd.Tasks, 2)
+}
+
+func TestNewJobDetail_SortsByDependencies(t *testing.T) {
+	// c depends on b, b depends on a, d is independent
+	tasks := []job.Task{
+		{TaskKey: "c", DependsOn: []string{"b"}},
+		{TaskKey: "b", DependsOn: []string{"a"}},
+		{TaskKey: "d"},
+		{TaskKey: "a"},
+	}
+	jd := job.NewJobDetail(job.Job{ID: 1, Name: "pipeline"}, tasks)
+	require.Len(t, jd.Tasks, 4)
+
+	// dependencies must appear before dependents
+	keys := make([]string, len(jd.Tasks))
+	for i, t := range jd.Tasks {
+		keys[i] = t.TaskKey
+	}
+	idx := func(k string) int {
+		for i, key := range keys {
+			if key == k {
+				return i
+			}
+		}
+		return -1
+	}
+	assert.True(t, idx("a") < idx("b"), "a must come before b")
+	assert.True(t, idx("b") < idx("c"), "b must come before c")
+}
+
+func TestNewJobDetail_SortIndependentTasks(t *testing.T) {
+	tasks := []job.Task{
+		{TaskKey: "c"},
+		{TaskKey: "a"},
+		{TaskKey: "b"},
+	}
+	jd := job.NewJobDetail(job.Job{ID: 1, Name: "test"}, tasks)
+	require.Len(t, jd.Tasks, 3)
+	// independent tasks are sorted alphabetically
+	assert.Equal(t, "a", jd.Tasks[0].TaskKey)
+	assert.Equal(t, "b", jd.Tasks[1].TaskKey)
+	assert.Equal(t, "c", jd.Tasks[2].TaskKey)
+}
+
+func TestNewJobDetail_SingleTask(t *testing.T) {
+	jd := job.NewJobDetail(job.Job{ID: 1}, []job.Task{{TaskKey: "only"}})
+	assert.Len(t, jd.Tasks, 1)
+	assert.Equal(t, "only", jd.Tasks[0].TaskKey)
 }
 
 func TestNewRunDetail(t *testing.T) {

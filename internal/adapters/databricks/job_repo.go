@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/databricks/databricks-sdk-go/service/jobs"
@@ -41,6 +42,30 @@ func (r *JobRepo) List(ctx context.Context) ([]job.Job, error) {
 			CreatedAt: msToTime(j.CreatedTime),
 		})
 	}
+
+	// fetch last run time for each job in parallel (max 5 concurrent)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 5)
+
+	for i := range jobs {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			runs, err := r.client.ListJobRuns(ctx, jobs[idx].ID, 1)
+			if err != nil {
+				slog.Warn("fetch last run failed", "jobID", jobs[idx].ID, "error", err)
+				return
+			}
+			if len(runs) > 0 {
+				jobs[idx].LastRunTime = msToTime(runs[0].StartTime)
+			}
+		}(i)
+	}
+	wg.Wait()
+
 	return jobs, nil
 }
 
