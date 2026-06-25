@@ -372,17 +372,17 @@ func (m JobDetailModel) View() tea.View {
 				deps = " ← [" + strings.Join(t.DependsOn, ",") + "]"
 			}
 			// enrich with last run status if available
+			dateCol := "                    " // 20 spaces, matches "(YYYY-MM-DD HH:MM) "
 			statusIcon := ""
 			statusPart := ""
-			statusTime := ""
 			if tr, ok := m.taskStatuses[t.TaskKey]; ok {
 				statusIcon = stateIcon(tr.State) + " "
 				statusPart = " — " + string(tr.State)
 				if !tr.StartAt.IsZero() {
-					statusTime = " (" + tr.StartAt.Format("2006-01-02 15:04") + ")"
+					dateCol = "(" + tr.StartAt.Format("2006-01-02 15:04") + ") "
 				}
 			}
-			s += fmt.Sprintf("  %s %s%s | %s%s%s%s\n", cursor, statusIcon, t.TaskKey, t.TaskType(), statusPart, statusTime, deps)
+			s += fmt.Sprintf("  %s%s%s%s | %s%s%s\n", cursor, dateCol, statusIcon, t.TaskKey, t.TaskType(), statusPart, deps)
 		}
 	}
 

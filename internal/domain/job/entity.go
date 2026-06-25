@@ -3,6 +3,7 @@ package job
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -87,9 +88,71 @@ type JobDetail struct {
 	Tasks []Task
 }
 
-// NewJobDetail creates a JobDetail.
+// NewJobDetail creates a JobDetail with tasks sorted by dependency order.
 func NewJobDetail(j Job, tasks []Task) JobDetail {
-	return JobDetail{Job: j, Tasks: tasks}
+	return JobDetail{Job: j, Tasks: sortByDeps(tasks)}
+}
+
+// sortByDeps returns tasks topologically sorted so that dependencies appear
+// before the tasks that depend on them. Tasks with no deps come first.
+func sortByDeps(tasks []Task) []Task {
+	if len(tasks) <= 1 {
+		return tasks
+	}
+
+	// build lookup + in-degree map
+	byKey := make(map[string]Task, len(tasks))
+	inDegree := make(map[string]int, len(tasks))
+	dependents := make(map[string][]string) // key → tasks that depend on it
+
+	for _, t := range tasks {
+		byKey[t.TaskKey] = t
+		if _, ok := inDegree[t.TaskKey]; !ok {
+			inDegree[t.TaskKey] = 0
+		}
+		for _, dep := range t.DependsOn {
+			inDegree[t.TaskKey]++
+			dependents[dep] = append(dependents[dep], t.TaskKey)
+		}
+	}
+
+	// Kahn's algorithm: queue tasks with in-degree 0
+	var queue []string
+	for key, deg := range inDegree {
+		if deg == 0 {
+			queue = append(queue, key)
+		}
+	}
+	sort.Strings(queue) // stable order for same-level tasks
+
+	result := make([]Task, 0, len(tasks))
+	for len(queue) > 0 {
+		key := queue[0]
+		queue = queue[1:]
+		if t, ok := byKey[key]; ok {
+			result = append(result, t)
+		}
+		for _, dep := range dependents[key] {
+			inDegree[dep]--
+			if inDegree[dep] == 0 {
+				queue = append(queue, dep)
+				sort.Strings(queue) // keep stable
+			}
+		}
+	}
+
+	// if there are cycles or missing deps, append remaining tasks
+	seen := make(map[string]bool, len(result))
+	for _, t := range result {
+		seen[t.TaskKey] = true
+	}
+	for _, t := range tasks {
+		if !seen[t.TaskKey] {
+			result = append(result, t)
+		}
+	}
+
+	return result
 }
 
 // TaskCount returns the number of tasks in this job.
