@@ -58,6 +58,9 @@ type jobLatestRunTasksMsg struct {
 	Err   error
 }
 
+// refreshJobDetailMsg signals the app model to refetch job data.
+type refreshJobDetailMsg struct{}
+
 // --- items ---
 
 type JobItem struct {
@@ -256,14 +259,18 @@ func saveFavorites(favs map[int64]bool) {
 
 // --- JobDetailModel ---
 
+const maxVisibleRuns = 10
+
 type JobDetailModel struct {
 	detail       *job.JobDetail
 	runs         []job.Run
 	taskStatuses map[string]job.TaskRun // taskKey → last run status
 	focusRuns    bool                    // tab toggles between runs cursor and tasks cursor
 	runCursor    int
+	runOffset    int // first visible run index
 	taskCursor   int
 	loaded       bool
+	refreshing   bool
 	err          error
 	jobID        int64
 }
@@ -280,10 +287,16 @@ func (m JobDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "tab":
 			m.focusRuns = !m.focusRuns
+		case "r":
+			if !m.refreshing {
+				m.refreshing = true
+				return m, func() tea.Msg { return refreshJobDetailMsg{} }
+			}
 		case "up", "k":
 			if m.focusRuns {
 				if m.runCursor > 0 {
 					m.runCursor--
+					m.scrollRunsIntoView()
 				}
 			} else {
 				if m.taskCursor > 0 {
@@ -294,15 +307,47 @@ func (m JobDetailModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focusRuns {
 				if m.runCursor < len(m.runs)-1 {
 					m.runCursor++
+					m.scrollRunsIntoView()
 				}
 			} else {
 				if m.detail != nil && m.taskCursor < len(m.detail.Tasks)-1 {
 					m.taskCursor++
 				}
 			}
+		case "pgup":
+			if m.focusRuns {
+				m.runCursor = max(0, m.runCursor-maxVisibleRuns)
+				m.runOffset = max(0, m.runOffset-maxVisibleRuns)
+			}
+		case "pgdown":
+			if m.focusRuns && len(m.runs) > 0 {
+				m.runCursor = min(len(m.runs)-1, m.runCursor+maxVisibleRuns)
+				m.runOffset = min(max(0, len(m.runs)-maxVisibleRuns), m.runOffset+maxVisibleRuns)
+			}
+		case "home":
+			if m.focusRuns {
+				m.runCursor = 0
+				m.runOffset = 0
+			}
+		case "end":
+			if m.focusRuns && len(m.runs) > 0 {
+				m.runCursor = len(m.runs) - 1
+				m.runOffset = max(0, len(m.runs)-maxVisibleRuns)
+			}
 		}
 	}
 	return m, nil
+}
+
+// scrollRunsIntoView adjusts runOffset so that runCursor is visible.
+func (m *JobDetailModel) scrollRunsIntoView() {
+	visibleEnd := m.runOffset + maxVisibleRuns
+	if m.runCursor < m.runOffset {
+		m.runOffset = m.runCursor
+	}
+	if m.runCursor >= visibleEnd {
+		m.runOffset = m.runCursor - maxVisibleRuns + 1
+	}
 }
 
 func (m JobDetailModel) View() tea.View {
@@ -320,7 +365,16 @@ func (m JobDetailModel) View() tea.View {
 	highlight := lipgloss.NewStyle().Foreground(lipgloss.Color("#F0A500"))
 	d := m.detail
 
-	s := title.Render("Job: "+d.Job.Name) + "\n\n"
+	s := title.Render("Job: "+d.Job.Name)
+
+	// refresh indicator
+	refreshHint := lipgloss.NewStyle().Foreground(lipgloss.Color("#626262"))
+	if m.refreshing {
+		s += "  " + refreshHint.Render("⟳ refreshing...")
+	} else {
+		s += "  " + refreshHint.Render("[r] refresh")
+	}
+	s += "\n\n"
 
 	// metadata
 	s += fmt.Sprintf("  ID:       %d\n", d.Job.ID)
@@ -338,7 +392,17 @@ func (m JobDetailModel) View() tea.View {
 	if len(m.runs) == 0 {
 		s += "  (no runs)\n"
 	} else {
-		for i, r := range m.runs {
+		// show scroll indicator if not at top
+		if m.runOffset > 0 {
+			s += "  ↑ " + fmt.Sprintf("%d more above\n", m.runOffset)
+		}
+
+		visibleEnd := m.runOffset + maxVisibleRuns
+		if visibleEnd > len(m.runs) {
+			visibleEnd = len(m.runs)
+		}
+		for i := m.runOffset; i < visibleEnd; i++ {
+			r := m.runs[i]
 			cursor := " "
 			if m.focusRuns && m.runCursor == i {
 				cursor = ">"
@@ -349,6 +413,12 @@ func (m JobDetailModel) View() tea.View {
 				when = r.StartAt.Format("2006-01-02 15:04")
 			}
 			s += fmt.Sprintf("  %s %s %s — %s\n", cursor, icon, when, string(r.State))
+		}
+
+		// show scroll indicator if more below
+		remaining := len(m.runs) - visibleEnd
+		if remaining > 0 {
+			s += "  ↓ " + fmt.Sprintf("%d more below\n", remaining)
 		}
 	}
 
